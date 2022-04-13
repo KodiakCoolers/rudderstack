@@ -43,6 +43,10 @@ func loadConfig() {
 	config.RegisterDurationConfigVariable(time.Duration(10), &WriteTimeout, false, time.Second, []string{"WriteTimeout", "WriteTimeOutInSec"}...)
 	config.RegisterDurationConfigVariable(time.Duration(720), &IdleTimeout, false, time.Second, []string{"IdleTimeout", "IdleTimeoutInSec"}...)
 	config.RegisterIntConfigVariable(524288, &MaxHeaderBytes, false, 1, "MaxHeaderBytes")
+	//default is set with assumption that 4GB of RAM is present, with avg. event size=5KB & avg. batch size=10.
+	config.RegisterIntConfigVariable(80000, &maxClients, false, 1, "Gateway.maxClients")
+	config.RegisterBoolConfigVariable(true, &enableClientLimit, false, "Gateway.enableClientLimit")
+
 }
 
 // MaxReqSize is the maximum request body size, in bytes, accepted by gateway web handlers

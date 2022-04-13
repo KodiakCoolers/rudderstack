@@ -76,7 +76,7 @@ type batchWebRequestT struct {
 
 var (
 	webPort, maxUserWebRequestWorkerProcess, maxDBWriterProcess, adminWebPort int
-	maxUserWebRequestBatchSize, maxDBBatchSize, MaxHeaderBytes                int
+	maxUserWebRequestBatchSize, maxDBBatchSize, MaxHeaderBytes, maxClients    int
 	userWebRequestBatchTimeout, dbBatchWriteTimeout                           time.Duration
 	enabledWriteKeysSourceMap                                                 map[string]backendconfig.SourceT
 	enabledWriteKeyWebhookMap                                                 map[string]string
@@ -84,7 +84,7 @@ var (
 	sourceIDToNameMap                                                         map[string]string
 	configSubscriberLock                                                      sync.RWMutex
 	maxReqSize                                                                int
-	enableRateLimit                                                           bool
+	enableRateLimit, enableClientLimit                                        bool
 	enableSuppressUserFeature                                                 bool
 	enableEventSchemasFeature                                                 bool
 	diagnosisTickerTime                                                       time.Duration
@@ -162,6 +162,7 @@ type HandleT struct {
 	addToBatchRequestQWaitTime                                 stats.RudderStats
 	trackSuccessCount                                          int
 	trackFailureCount                                          int
+	activeClientCount                                          int
 	requestMetricLock                                          sync.RWMutex
 	diagnosisTicker                                            *time.Ticker
 	webRequestBatchCount                                       uint64
@@ -177,9 +178,9 @@ type HandleT struct {
 	netHandle                                                  *http.Client
 	httpTimeout                                                time.Duration
 	httpWebServer                                              *http.Server
-
-	backgroundCancel context.CancelFunc
-	backgroundWait   func() error
+	client                                                     chan struct{}
+	backgroundCancel                                           context.CancelFunc
+	backgroundWait                                             func() error
 }
 
 func (gateway *HandleT) updateSourceStats(sourceStats map[string]int, bucket string, sourceTagMap map[string]string) {
@@ -656,7 +657,20 @@ func (gateway *HandleT) printStats(ctx context.Context) {
 	}
 }
 
-func (gateway *HandleT) stat(wrappedFunc func(http.ResponseWriter, *http.Request)) func(http.ResponseWriter, *http.Request) {
+func (gateway *HandleT) withMiddleware(fu func(http.ResponseWriter, *http.Request)) func(http.ResponseWriter, *http.Request) {
+	//this is to make sure that we don't have more than `maxClient` in-memory at any point of time. As, having more http client than `maxClient`
+	// may lead to gateway OOM kill.
+	if enableClientLimit {
+		gateway.client <- struct{}{}
+		defer func() { <-gateway.client }()
+	}
+
+	gateway.activeClientCount++
+	defer func() { gateway.activeClientCount-- }()
+
+	return gateway.withStat(fu)
+}
+func (gateway *HandleT) withStat(wrappedFunc func(http.ResponseWriter, *http.Request)) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		latencyStat := gateway.stats.NewSampledTaggedStat("gateway.response_time", stats.TimerType, map[string]string{"reqType": r.URL.Path})
 		latencyStat.Start()
@@ -1381,23 +1395,23 @@ func (gateway *HandleT) StartWebHandler(ctx context.Context) error {
 	gateway.logger.Infof("Starting in %d", webPort)
 	srvMux := mux.NewRouter()
 	srvMux.Use(headerMiddleware)
-	srvMux.HandleFunc("/v1/batch", gateway.stat(gateway.webBatchHandler)).Methods("POST")
-	srvMux.HandleFunc("/v1/identify", gateway.stat(gateway.webIdentifyHandler)).Methods("POST")
-	srvMux.HandleFunc("/v1/track", gateway.stat(gateway.webTrackHandler)).Methods("POST")
-	srvMux.HandleFunc("/v1/page", gateway.stat(gateway.webPageHandler)).Methods("POST")
-	srvMux.HandleFunc("/v1/screen", gateway.stat(gateway.webScreenHandler)).Methods("POST")
-	srvMux.HandleFunc("/v1/alias", gateway.stat(gateway.webAliasHandler)).Methods("POST")
-	srvMux.HandleFunc("/v1/merge", gateway.stat(gateway.webMergeHandler)).Methods("POST")
-	srvMux.HandleFunc("/v1/group", gateway.stat(gateway.webGroupHandler)).Methods("POST")
+	srvMux.HandleFunc("/v1/batch", gateway.withMiddleware(gateway.webBatchHandler)).Methods("POST")
+	srvMux.HandleFunc("/v1/identify", gateway.withMiddleware(gateway.webIdentifyHandler)).Methods("POST")
+	srvMux.HandleFunc("/v1/track", gateway.withMiddleware(gateway.webTrackHandler)).Methods("POST")
+	srvMux.HandleFunc("/v1/page", gateway.withMiddleware(gateway.webPageHandler)).Methods("POST")
+	srvMux.HandleFunc("/v1/screen", gateway.withMiddleware(gateway.webScreenHandler)).Methods("POST")
+	srvMux.HandleFunc("/v1/alias", gateway.withMiddleware(gateway.webAliasHandler)).Methods("POST")
+	srvMux.HandleFunc("/v1/merge", gateway.withMiddleware(gateway.webMergeHandler)).Methods("POST")
+	srvMux.HandleFunc("/v1/group", gateway.withMiddleware(gateway.webGroupHandler)).Methods("POST")
 	srvMux.HandleFunc("/health", gateway.healthHandler).Methods("GET")
-	srvMux.HandleFunc("/v1/import", gateway.stat(gateway.webImportHandler)).Methods("POST")
-	srvMux.HandleFunc("/v1/audiencelist", gateway.stat(gateway.webAudienceListHandler)).Methods("POST")
+	srvMux.HandleFunc("/v1/import", gateway.withMiddleware(gateway.webImportHandler)).Methods("POST")
+	srvMux.HandleFunc("/v1/audiencelist", gateway.withMiddleware(gateway.webAudienceListHandler)).Methods("POST")
 	srvMux.HandleFunc("/", gateway.healthHandler).Methods("GET")
-	srvMux.HandleFunc("/pixel/v1/track", gateway.stat(gateway.pixelTrackHandler)).Methods("GET")
-	srvMux.HandleFunc("/pixel/v1/page", gateway.stat(gateway.pixelPageHandler)).Methods("GET")
+	srvMux.HandleFunc("/pixel/v1/track", gateway.withMiddleware(gateway.pixelTrackHandler)).Methods("GET")
+	srvMux.HandleFunc("/pixel/v1/page", gateway.withMiddleware(gateway.pixelPageHandler)).Methods("GET")
 	srvMux.HandleFunc("/version", gateway.versionHandler).Methods("GET")
-	srvMux.HandleFunc("/v1/webhook", gateway.stat(gateway.webhookHandler.RequestHandler)).Methods("POST", "GET")
-	srvMux.HandleFunc("/beacon/v1/batch", gateway.stat(gateway.beaconBatchHandler)).Methods("POST")
+	srvMux.HandleFunc("/v1/webhook", gateway.withMiddleware(gateway.webhookHandler.RequestHandler)).Methods("POST", "GET")
+	srvMux.HandleFunc("/beacon/v1/batch", gateway.withMiddleware(gateway.beaconBatchHandler)).Methods("POST")
 
 	if enableEventSchemasFeature {
 		srvMux.HandleFunc("/schemas/event-models", gateway.eventSchemaWebHandler(gateway.eventSchemaHandler.GetEventModels)).Methods("GET")
@@ -1410,10 +1424,10 @@ func (gateway *HandleT) StartWebHandler(ctx context.Context) error {
 	}
 
 	//todo: remove in next release
-	srvMux.HandleFunc("/v1/pending-events", gateway.stat(gateway.pendingEventsHandler)).Methods("POST")
-	srvMux.HandleFunc("/v1/clear", gateway.stat(gateway.ClearHandler)).Methods("POST")
-	srvMux.HandleFunc("/v1/failed-events", gateway.stat(gateway.fetchFailedEventsHandler)).Methods("POST")
-	srvMux.HandleFunc("/v1/clear-failed-events", gateway.stat(gateway.clearFailedEventsHandler)).Methods("POST")
+	srvMux.HandleFunc("/v1/pending-events", gateway.withMiddleware(gateway.pendingEventsHandler)).Methods("POST")
+	srvMux.HandleFunc("/v1/clear", gateway.withMiddleware(gateway.ClearHandler)).Methods("POST")
+	srvMux.HandleFunc("/v1/failed-events", gateway.withMiddleware(gateway.fetchFailedEventsHandler)).Methods("POST")
+	srvMux.HandleFunc("/v1/clear-failed-events", gateway.withMiddleware(gateway.clearFailedEventsHandler)).Methods("POST")
 
 	c := cors.New(cors.Options{
 		AllowOriginFunc:  reflectOrigin,
@@ -1458,9 +1472,9 @@ func (gateway *HandleT) StartAdminHandler(ctx context.Context) error {
 	gateway.logger.Infof("Starting AdminHandler in %d", adminWebPort)
 	srvMux := mux.NewRouter()
 	srvMux.Use(headerMiddleware)
-	srvMux.HandleFunc("/v1/clear", gateway.stat(gateway.ClearHandler)).Methods("POST")
-	srvMux.HandleFunc("/v1/clear", gateway.stat(gateway.OperationStatusHandler)).Methods("GET")
-	srvMux.HandleFunc("/v1/pending-events", gateway.stat(gateway.pendingEventsHandler)).Methods("POST")
+	srvMux.HandleFunc("/v1/clear", gateway.withMiddleware(gateway.ClearHandler)).Methods("POST")
+	srvMux.HandleFunc("/v1/clear", gateway.withMiddleware(gateway.OperationStatusHandler)).Methods("GET")
+	srvMux.HandleFunc("/v1/pending-events", gateway.withMiddleware(gateway.pendingEventsHandler)).Methods("POST")
 
 	srv := &http.Server{
 		Addr:    ":" + strconv.Itoa(adminWebPort),
@@ -1527,6 +1541,7 @@ Finds the worker for a particular userID and queues the webrequest with the work
 They are further batched together in userWebRequestBatcher
 */
 func (gateway *HandleT) addToWebRequestQ(writer *http.ResponseWriter, req *http.Request, done chan string, reqType string, requestPayload []byte, writeKey string) {
+
 	userIDHeader := req.Header.Get("AnonymousId")
 	//If necessary fetch userID from request body.
 	if userIDHeader == "" {
@@ -1618,7 +1633,7 @@ func (gateway *HandleT) Setup(application app.Interface, backendConfig backendco
 	gateway.webhookHandler = webhook.Setup(gateway)
 	gatewayAdmin := GatewayAdmin{handle: gateway}
 	gatewayRPCHandler := GatewayRPCHandler{jobsDB: gateway.jobsDB, readOnlyJobsDB: gateway.readonlyGatewayDB}
-
+	gateway.client = make(chan struct{}, maxClients)
 	admin.RegisterStatusHandler("Gateway", &gatewayAdmin)
 	admin.RegisterAdminHandler("Gateway", &gatewayRPCHandler)
 
@@ -1681,4 +1696,13 @@ func (gateway *HandleT) Shutdown() {
 	}
 
 	gateway.backgroundWait()
+}
+
+// sendActiveClientCount sends number of active in-memory request that are received but, not yet persisted, i.e. stored in postgres, metric every 10 seconds
+func (gateway *HandleT) sendActiveClientCount() {
+	activeClientCount := stats.NewStat("gateway.active_client_count", stats.GaugeType)
+	for {
+		time.Sleep(10 * time.Second)
+		activeClientCount.Gauge(gateway.activeClientCount)
+	}
 }
