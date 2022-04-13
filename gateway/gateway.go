@@ -1684,6 +1684,10 @@ func (gateway *HandleT) Setup(application app.Interface, backendConfig backendco
 		gateway.collectMetrics(ctx)
 		return nil
 	}))
+	g.Go(func() error {
+		gateway.sendActiveClientCount()
+		return nil
+	})
 }
 
 func (gateway *HandleT) Shutdown() {
