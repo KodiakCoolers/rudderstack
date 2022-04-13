@@ -1685,7 +1685,7 @@ func (gateway *HandleT) Setup(application app.Interface, backendConfig backendco
 		return nil
 	}))
 	g.Go(func() error {
-		gateway.sendActiveClientCount()
+		gateway.sendActiveClientCount(ctx)
 		return nil
 	})
 }
@@ -1703,10 +1703,14 @@ func (gateway *HandleT) Shutdown() {
 }
 
 // sendActiveClientCount sends number of active in-memory request that are received but, not yet persisted, i.e. stored in postgres, metric every 10 seconds
-func (gateway *HandleT) sendActiveClientCount() {
+func (gateway *HandleT) sendActiveClientCount(ctx context.Context) {
 	activeClientCount := stats.NewStat("gateway.active_client_count", stats.GaugeType)
 	for {
-		time.Sleep(10 * time.Second)
-		activeClientCount.Gauge(gateway.activeClientCount)
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(10 * time.Second):
+			activeClientCount.Gauge(gateway.activeClientCount)
+		}
 	}
 }
