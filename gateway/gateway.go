@@ -660,16 +660,23 @@ func (gateway *HandleT) printStats(ctx context.Context) {
 func (gateway *HandleT) withMiddleware(fu func(http.ResponseWriter, *http.Request)) func(http.ResponseWriter, *http.Request) {
 	//this is to make sure that we don't have more than `maxClient` in-memory at any point of time. As, having more http client than `maxClient`
 	// may lead to gateway OOM kill.
+	//NOTE: even after we hit the limit of `maxNoCLient`. New request will still pileup until we hit the backlog limit set by `listen` command.
+	// By default it is around 128.If a connection request arrives when the queue is full, the client may receive an error with an indication of ECONNREFUSED.
 	if enableClientLimit {
 		gateway.client <- struct{}{}
-		defer func() { <-gateway.client }()
+		defer func() {
+			<-gateway.client
+		}()
 	}
 
 	gateway.activeClientCount++
-	defer func() { gateway.activeClientCount-- }()
+	defer func() {
+		gateway.activeClientCount--
+	}()
 
 	return gateway.withStat(fu)
 }
+
 func (gateway *HandleT) withStat(wrappedFunc func(http.ResponseWriter, *http.Request)) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		latencyStat := gateway.stats.NewSampledTaggedStat("gateway.response_time", stats.TimerType, map[string]string{"reqType": r.URL.Path})
