@@ -22,6 +22,9 @@ const (
 	RequestBodyReadFailed = "Failed to read body from request"
 	//RequestBodyTooLarge - Request size exceeds max limit
 	RequestBodyTooLarge = "Request size exceeds max limit"
+	//TooManyRequestsInMemory - This can be because of sudden spike in requests or maybe DB is under pressure, because of which DB write
+	//is taking more time than usual, because of which currently we have too many jobs in-memory.
+	TooManyRequestsInMemory = "Too many request in-memory"
 	//InvalidWriteKey - Invalid Write Key
 	InvalidWriteKey = "Invalid Write Key"
 	//InvalidJSON - Invalid JSON
@@ -76,6 +79,8 @@ func loadStatusMap() {
 	statusMap[RequestBodyTooLarge] = ResponseStatus{message: RequestBodyTooLarge, code: http.StatusRequestEntityTooLarge}
 	statusMap[InvalidWriteKey] = ResponseStatus{message: InvalidWriteKey, code: http.StatusUnauthorized}
 	statusMap[InvalidJSON] = ResponseStatus{message: InvalidJSON, code: http.StatusBadRequest}
+	statusMap[TooManyRequestsInMemory] = ResponseStatus{message: InvalidJSON, code: http.StatusServiceUnavailable}
+
 	// webhook specific status
 	statusMap[InvalidWebhookSource] = ResponseStatus{message: InvalidWebhookSource, code: http.StatusBadRequest}
 	statusMap[SourceTransformerFailed] = ResponseStatus{message: SourceTransformerFailed, code: http.StatusBadRequest}
@@ -88,6 +93,7 @@ func loadStatusMap() {
 	statusMap[ErrorInMarshal] = ResponseStatus{message: ErrorInMarshal, code: http.StatusBadRequest}
 	statusMap[ErrorInParseForm] = ResponseStatus{message: ErrorInParseForm, code: http.StatusBadRequest}
 	statusMap[ErrorInParseMultiform] = ResponseStatus{message: ErrorInParseMultiform, code: http.StatusBadRequest}
+
 }
 
 func GetStatus(key string) string {
