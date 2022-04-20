@@ -79,7 +79,7 @@ func loadStatusMap() {
 	statusMap[RequestBodyTooLarge] = ResponseStatus{message: RequestBodyTooLarge, code: http.StatusRequestEntityTooLarge}
 	statusMap[InvalidWriteKey] = ResponseStatus{message: InvalidWriteKey, code: http.StatusUnauthorized}
 	statusMap[InvalidJSON] = ResponseStatus{message: InvalidJSON, code: http.StatusBadRequest}
-	statusMap[TooManyRequestsInMemory] = ResponseStatus{message: InvalidJSON, code: http.StatusServiceUnavailable}
+	statusMap[TooManyRequestsInMemory] = ResponseStatus{message: TooManyRequestsInMemory, code: http.StatusServiceUnavailable}
 
 	// webhook specific status
 	statusMap[InvalidWebhookSource] = ResponseStatus{message: InvalidWebhookSource, code: http.StatusBadRequest}

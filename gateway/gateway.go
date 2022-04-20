@@ -1487,7 +1487,7 @@ func (gateway *HandleT) maxActiveClientMiddleware(next http.Handler) http.Handle
 					<-gateway.activeClient
 				}()
 			default:
-				http.Error(w, "server is under pressure", response.GetStatusCode(response.TooManyRequestsInMemory))
+				http.Error(w, response.GetStatus(response.TooManyRequestsInMemory), response.GetStatusCode(response.TooManyRequestsInMemory))
 				return
 			}
 		}
