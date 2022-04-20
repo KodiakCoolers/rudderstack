@@ -1472,26 +1472,26 @@ func (gateway *HandleT) StartAdminHandler(ctx context.Context) error {
 }
 
 func (gateway *HandleT) maxActiveClientMiddleware(next http.Handler) http.Handler {
-	atomic.AddInt32(&gateway.activeClientCount, 1)
-	defer func() {
-		atomic.AddInt32(&gateway.activeClientCount, -1)
-	}()
 
 	//this is to make sure that we don't have more than `maxClient` in-memory at any point of time. As, having more http client than `maxClient`
 	// may lead to gateway OOM kill.
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&gateway.activeClientCount, 1)
+		defer func() {
+			atomic.AddInt32(&gateway.activeClientCount, -1)
+		}()
 		if maxActiveClients != 0 {
 			select {
 			case gateway.activeClient <- struct{}{}:
 				defer func() {
 					<-gateway.activeClient
 				}()
-				next.ServeHTTP(w, r)
 			default:
 				http.Error(w, "server is under pressure", response.GetStatusCode(response.TooManyRequestsInMemory))
 				return
 			}
 		}
+		next.ServeHTTP(w, r)
 	})
 }
 
