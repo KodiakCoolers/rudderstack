@@ -33,6 +33,7 @@ import (
 
 	"github.com/cenkalti/backoff"
 	"github.com/rudderlabs/rudder-server/admin"
+	"github.com/rudderlabs/rudder-server/jobsdb/prebackup"
 	"github.com/rudderlabs/rudder-server/utils/logger"
 	"github.com/tidwall/gjson"
 	"golang.org/x/sync/errgroup"
@@ -352,6 +353,7 @@ type HandleT struct {
 	backgroundCancel              context.CancelFunc
 	backgroundGroup               *errgroup.Group
 	maxBackupRetryTime            time.Duration
+	preBackupDoers                []prebackup.Doer
 
 	// skipSetupDBSetup is useful for testing as we mock the database client
 	// TODO: Remove this flag once we have test setup that uses real database
@@ -654,6 +656,13 @@ func WithStatusHandler() OptsFunc {
 	}
 }
 
+// WithPreBackupDoers, sets pre-backup doers
+func WithPreBackupDoers(preBackupDoers []prebackup.Doer) OptsFunc {
+	return func(jd *HandleT) {
+		jd.preBackupDoers = preBackupDoers
+	}
+}
+
 func NewForRead(tablePrefix string, opts ...OptsFunc) *HandleT {
 	return newOwnerType(Read, tablePrefix, opts...)
 }
@@ -694,7 +703,7 @@ multiple users of JobsDB
 dsRetentionPeriod = A DS is not deleted if it has some activity
 in the retention time
 */
-func (jd *HandleT) Setup(ownerType OwnerType, clearAll bool, tablePrefix string, retentionPeriod time.Duration, migrationMode string, registerStatusHandler bool, queryFilterKeys QueryFiltersT) {
+func (jd *HandleT) Setup(ownerType OwnerType, clearAll bool, tablePrefix string, retentionPeriod time.Duration, migrationMode string, registerStatusHandler bool, queryFilterKeys QueryFiltersT, preBackupDoers []prebackup.Doer) {
 	jd.ownerType = ownerType
 	jd.clearAll = clearAll
 	jd.tablePrefix = tablePrefix
@@ -702,6 +711,7 @@ func (jd *HandleT) Setup(ownerType OwnerType, clearAll bool, tablePrefix string,
 	jd.migrationState.migrationMode = migrationMode
 	jd.registerStatusHandler = registerStatusHandler
 	jd.queryFilterKeys = queryFilterKeys
+	jd.preBackupDoers = preBackupDoers
 
 	jd.init()
 	jd.Start()
@@ -1615,21 +1625,36 @@ func (jd *HandleT) renameDS(ds dataSetT, allowMissing bool) {
 	var sqlStatement string
 	var renamedJobStatusTable = fmt.Sprintf(`pre_drop_%s`, ds.JobStatusTable)
 	var renamedJobTable = fmt.Sprintf(`pre_drop_%s`, ds.JobTable)
+	err := jd.doInTransaction(func(tx *sql.Tx) error {
+		if allowMissing {
+			sqlStatement = fmt.Sprintf(`ALTER TABLE IF EXISTS "%s" RENAME TO "%s"`, ds.JobStatusTable, renamedJobStatusTable)
+		} else {
+			sqlStatement = fmt.Sprintf(`ALTER TABLE "%s" RENAME TO "%s"`, ds.JobStatusTable, renamedJobStatusTable)
+		}
+		_, err := jd.dbHandle.Exec(sqlStatement)
+		if err != nil {
+			return err
+		}
 
-	if allowMissing {
-		sqlStatement = fmt.Sprintf(`ALTER TABLE IF EXISTS "%s" RENAME TO "%s"`, ds.JobStatusTable, renamedJobStatusTable)
-	} else {
-		sqlStatement = fmt.Sprintf(`ALTER TABLE "%s" RENAME TO "%s"`, ds.JobStatusTable, renamedJobStatusTable)
-	}
-	_, err := jd.dbHandle.Exec(sqlStatement)
-	jd.assertError(err)
-
-	if allowMissing {
-		sqlStatement = fmt.Sprintf(`ALTER TABLE IF EXISTS "%s" RENAME TO "%s"`, ds.JobTable, renamedJobTable)
-	} else {
-		sqlStatement = fmt.Sprintf(`ALTER TABLE "%s" RENAME TO "%s"`, ds.JobTable, renamedJobTable)
-	}
-	_, err = jd.dbHandle.Exec(sqlStatement)
+		if allowMissing {
+			sqlStatement = fmt.Sprintf(`ALTER TABLE IF EXISTS "%s" RENAME TO "%s"`, ds.JobTable, renamedJobTable)
+		} else {
+			sqlStatement = fmt.Sprintf(`ALTER TABLE "%s" RENAME TO "%s"`, ds.JobTable, renamedJobTable)
+		}
+		_, err = jd.dbHandle.Exec(sqlStatement)
+		if err != nil {
+			return err
+		}
+		if !allowMissing && len(jd.preBackupDoers) > 0 {
+			for _, preBackupDoer := range jd.preBackupDoers {
+				err = preBackupDoer.Do(context.TODO(), tx, renamedJobTable, renamedJobStatusTable)
+				if err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	})
 	jd.assertError(err)
 }
 

@@ -14,6 +14,7 @@ import (
 	backendconfig "github.com/rudderlabs/rudder-server/config/backend-config"
 	"github.com/rudderlabs/rudder-server/gateway"
 	"github.com/rudderlabs/rudder-server/jobsdb"
+	"github.com/rudderlabs/rudder-server/jobsdb/prebackup"
 	operationmanager "github.com/rudderlabs/rudder-server/operation-manager"
 	"github.com/rudderlabs/rudder-server/processor"
 	ratelimiter "github.com/rudderlabs/rudder-server/rate-limiter"
@@ -71,6 +72,12 @@ func (embedded *EmbeddedApp) StartRudderCore(ctx context.Context, options *app.O
 
 	migrationMode := embedded.App.Options().MigrationMode
 	reportingI := embedded.App.Features().Reporting.GetReportingInstance()
+	dropSourceIds := prebackup.DropSourceIds(
+		prebackup.BackendConfigSourceIdsProvider(
+			ctx,
+			backendconfig.DefaultBackendConfig,
+		),
+	)
 
 	//IMP NOTE: All the jobsdb setups must happen before migrator setup.
 	// This gwDBForProcessor should only be used by processor as this is supposed to be stopped and started with the
@@ -82,6 +89,7 @@ func (embedded *EmbeddedApp) StartRudderCore(ctx context.Context, options *app.O
 		jobsdb.WithMigrationMode(migrationMode),
 		jobsdb.WithStatusHandler(),
 		jobsdb.WithQueryFilterKeys(jobsdb.QueryFiltersT{}),
+		jobsdb.WithPreBackupDoers([]prebackup.Doer{dropSourceIds}),
 	)
 	defer gwDBForProcessor.Close()
 	routerDB := jobsdb.NewForReadWrite(
@@ -206,7 +214,7 @@ func (embedded *EmbeddedApp) StartRudderCore(ctx context.Context, options *app.O
 
 	if enableReplay && embedded.App.Features().Replay != nil {
 		var replayDB jobsdb.HandleT
-		replayDB.Setup(jobsdb.ReadWrite, options.ClearDB, "replay", routerDBRetention, migrationMode, true, jobsdb.QueryFiltersT{})
+		replayDB.Setup(jobsdb.ReadWrite, options.ClearDB, "replay", routerDBRetention, migrationMode, true, jobsdb.QueryFiltersT{}, []prebackup.Doer{})
 		defer replayDB.TearDown()
 		embedded.App.Features().Replay.Setup(&replayDB, gwDBForProcessor, routerDB, batchRouterDB)
 	}
@@ -292,18 +300,24 @@ func (embedded *EmbeddedApp) LegacyStart(ctx context.Context, options *app.Optio
 
 	migrationMode := embedded.App.Options().MigrationMode
 	//IMP NOTE: All the jobsdb setups must happen before migrator setup.
-	gatewayDB.Setup(jobsdb.ReadWrite, options.ClearDB, "gw", gwDBRetention, migrationMode, true, jobsdb.QueryFiltersT{})
+	dropSourceIds := prebackup.DropSourceIds(
+		prebackup.BackendConfigSourceIdsProvider(
+			ctx,
+			backendconfig.DefaultBackendConfig,
+		),
+	)
+	gatewayDB.Setup(jobsdb.ReadWrite, options.ClearDB, "gw", gwDBRetention, migrationMode, true, jobsdb.QueryFiltersT{}, []prebackup.Doer{dropSourceIds})
 	defer gatewayDB.TearDown()
 
 	if enableProcessor || enableReplay {
 		//setting up router, batch router, proc error DBs only if processor is enabled.
-		routerDB.Setup(jobsdb.ReadWrite, options.ClearDB, "rt", routerDBRetention, migrationMode, true, router.QueryFilters)
+		routerDB.Setup(jobsdb.ReadWrite, options.ClearDB, "rt", routerDBRetention, migrationMode, true, router.QueryFilters, []prebackup.Doer{})
 		defer routerDB.TearDown()
 
-		batchRouterDB.Setup(jobsdb.ReadWrite, options.ClearDB, "batch_rt", routerDBRetention, migrationMode, true, batchrouter.QueryFilters)
+		batchRouterDB.Setup(jobsdb.ReadWrite, options.ClearDB, "batch_rt", routerDBRetention, migrationMode, true, batchrouter.QueryFilters, []prebackup.Doer{})
 		defer batchRouterDB.TearDown()
 
-		procErrorDB.Setup(jobsdb.ReadWrite, options.ClearDB, "proc_error", routerDBRetention, migrationMode, false, jobsdb.QueryFiltersT{})
+		procErrorDB.Setup(jobsdb.ReadWrite, options.ClearDB, "proc_error", routerDBRetention, migrationMode, false, jobsdb.QueryFiltersT{}, []prebackup.Doer{})
 		defer procErrorDB.TearDown()
 
 		if config.GetBool("EnableMultitenancy", false) {
@@ -377,7 +391,7 @@ func (embedded *EmbeddedApp) LegacyStart(ctx context.Context, options *app.Optio
 
 	if enableReplay && embedded.App.Features().Replay != nil {
 		var replayDB jobsdb.HandleT
-		replayDB.Setup(jobsdb.ReadWrite, options.ClearDB, "replay", routerDBRetention, migrationMode, true, jobsdb.QueryFiltersT{})
+		replayDB.Setup(jobsdb.ReadWrite, options.ClearDB, "replay", routerDBRetention, migrationMode, true, jobsdb.QueryFiltersT{}, []prebackup.Doer{})
 		defer replayDB.TearDown()
 		embedded.App.Features().Replay.Setup(&replayDB, &gatewayDB, &routerDB, &batchRouterDB)
 	}

@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rudderlabs/rudder-server/jobsdb/prebackup"
 	"github.com/rudderlabs/rudder-server/services/multitenant"
 
 	"github.com/gofrs/uuid"
@@ -173,7 +174,7 @@ func TestProcessorManager(t *testing.T) {
 	queryFilters := jobsdb.QueryFiltersT{
 		CustomVal: true,
 	}
-	tempDB.Setup(jobsdb.Write, true, "gw", dbRetention, migrationMode, true, queryFilters)
+	tempDB.Setup(jobsdb.Write, true, "gw", dbRetention, migrationMode, true, queryFilters, []prebackup.Doer{})
 	defer tempDB.TearDown()
 
 	customVal := "GW"

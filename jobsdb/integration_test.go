@@ -18,6 +18,7 @@ import (
 	"github.com/rudderlabs/rudder-server/admin"
 	"github.com/rudderlabs/rudder-server/config"
 	"github.com/rudderlabs/rudder-server/jobsdb"
+	"github.com/rudderlabs/rudder-server/jobsdb/prebackup"
 	"github.com/rudderlabs/rudder-server/services/archiver"
 	"github.com/rudderlabs/rudder-server/services/stats"
 	"github.com/rudderlabs/rudder-server/utils/logger"
@@ -148,7 +149,7 @@ func TestJobsDB(t *testing.T) {
 		CustomVal: true,
 	}
 
-	jobDB.Setup(jobsdb.ReadWrite, false, "batch_rt", dbRetention, migrationMode, true, queryFilters)
+	jobDB.Setup(jobsdb.ReadWrite, false, "batch_rt", dbRetention, migrationMode, true, queryFilters, []prebackup.Doer{})
 	defer jobDB.TearDown()
 
 	customVal := "MOCKDS"
@@ -298,7 +299,7 @@ func TestJobsDB(t *testing.T) {
 			},
 		}
 
-		jobDB.Setup(jobsdb.ReadWrite, false, "gw", dbRetention, migrationMode, true, queryFilters)
+		jobDB.Setup(jobsdb.ReadWrite, false, "gw", dbRetention, migrationMode, true, queryFilters, []prebackup.Doer{})
 		defer jobDB.TearDown()
 
 		jobCountPerDS := 10
@@ -396,7 +397,7 @@ func TestJobsDB_IncompatiblePayload(t *testing.T) {
 		CustomVal: true,
 	}
 
-	jobDB.Setup(jobsdb.ReadWrite, false, "gw", dbRetention, migrationMode, true, queryFilters)
+	jobDB.Setup(jobsdb.ReadWrite, false, "gw", dbRetention, migrationMode, true, queryFilters, []prebackup.Doer{})
 	defer jobDB.TearDown()
 	customVal := "MOCKDS"
 	var sampleTestJob = jobsdb.JobT{
@@ -436,7 +437,7 @@ func BenchmarkJobsdb(b *testing.B) {
 		CustomVal: true,
 	}
 
-	jobDB.Setup(jobsdb.ReadWrite, false, "batch_rt", dbRetention, migrationMode, true, queryFilters)
+	jobDB.Setup(jobsdb.ReadWrite, false, "batch_rt", dbRetention, migrationMode, true, queryFilters, []prebackup.Doer{})
 	defer jobDB.TearDown()
 
 	customVal := "MOCKDS"

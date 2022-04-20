@@ -9,6 +9,7 @@ import (
 	. "github.com/onsi/gomega"
 	"github.com/rudderlabs/rudder-server/admin"
 	"github.com/rudderlabs/rudder-server/config"
+	"github.com/rudderlabs/rudder-server/jobsdb/prebackup"
 	"github.com/rudderlabs/rudder-server/services/stats"
 	"github.com/rudderlabs/rudder-server/utils/logger"
 )
@@ -294,7 +295,7 @@ var _ = Describe("jobsdb", func() {
 			jd = &HandleT{}
 
 			jd.skipSetupDBSetup = true
-			jd.Setup(ReadWrite, false, "tt", 0*time.Hour, "", false, QueryFiltersT{})
+			jd.Setup(ReadWrite, false, "tt", 0*time.Hour, "", false, QueryFiltersT{}, []prebackup.Doer{})
 		})
 
 		AfterEach(func() {

@@ -5,6 +5,7 @@ import (
 	"time"
 
 	uuid "github.com/gofrs/uuid"
+	"github.com/rudderlabs/rudder-server/jobsdb/prebackup"
 	"github.com/rudderlabs/rudder-server/services/stats"
 	"github.com/stretchr/testify/require"
 )
@@ -22,7 +23,7 @@ func TestMultiTenantHandleT_GetAllJobs(t *testing.T) {
 		CustomVal: true,
 	}
 
-	jobDB.Setup(ReadWrite, false, "rt", dbRetention, migrationMode, true, queryFilters)
+	jobDB.Setup(ReadWrite, false, "rt", dbRetention, migrationMode, true, queryFilters, []prebackup.Doer{})
 	defer jobDB.TearDown()
 
 	customVal := "MOCKDS"

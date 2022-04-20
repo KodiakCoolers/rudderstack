@@ -3,8 +3,10 @@ package apphandlers
 import (
 	"context"
 	"fmt"
-	operationmanager "github.com/rudderlabs/rudder-server/operation-manager"
 	"net/http"
+
+	"github.com/rudderlabs/rudder-server/jobsdb/prebackup"
+	operationmanager "github.com/rudderlabs/rudder-server/operation-manager"
 
 	"github.com/rudderlabs/rudder-server/app"
 	backendconfig "github.com/rudderlabs/rudder-server/config/backend-config"
@@ -103,7 +105,7 @@ func (gatewayApp *GatewayApp) LegacyStart(ctx context.Context, options *app.Opti
 	sourcedebugger.Setup(backendconfig.DefaultBackendConfig)
 
 	migrationMode := gatewayApp.App.Options().MigrationMode
-	gatewayDB.Setup(jobsdb.Write, options.ClearDB, "gw", gwDBRetention, migrationMode, true, jobsdb.QueryFiltersT{})
+	gatewayDB.Setup(jobsdb.Write, options.ClearDB, "gw", gwDBRetention, migrationMode, true, jobsdb.QueryFiltersT{}, []prebackup.Doer{})
 	defer gatewayDB.TearDown()
 
 	operationmanager.Setup(&gatewayDB, nil, nil)
