@@ -72,9 +72,9 @@ func NewProducer(destinationConfig interface{}, o Opts) (*Client, error) {
 
 	var opts []option.ClientOption
 	if config.TestConfig.Endpoint != "" { // test configuration
-		opts = testClientOptions(config)
+		opts = testClientOptions(&config)
 	} else { // normal configuration
-		if opts, err = clientOptions(config); err != nil {
+		if opts, err = clientOptions(&config); err != nil {
 			return nil, err
 		}
 	}
@@ -232,7 +232,7 @@ func handleServiceError(err error) (statusCode int, responseMessage string) {
 	return statusCode, responseMessage
 }
 
-func clientOptions(config Config) ([]option.ClientOption, error) {
+func clientOptions(config *Config) ([]option.ClientOption, error) {
 	var credentials Credentials
 	if config.Credentials != "" {
 		err := json.Unmarshal([]byte(config.Credentials), &credentials)
@@ -278,7 +278,7 @@ func generateOAuthClient(jwtconfig *jwt.Config) (*http.Client, error) {
 	return client, err
 }
 
-func testClientOptions(config Config) []option.ClientOption {
+func testClientOptions(config *Config) []option.ClientOption {
 	token := &oauth2.Token{
 		AccessToken:  config.TestConfig.AccessToken,
 		RefreshToken: config.TestConfig.RefreshToken,
