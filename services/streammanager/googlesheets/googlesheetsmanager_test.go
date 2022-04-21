@@ -16,14 +16,15 @@ import (
 	"github.com/golang/mock/gomock"
 	"github.com/ory/dockertest"
 	mock_logger "github.com/rudderlabs/rudder-server/mocks/utils/logger"
+	"github.com/rudderlabs/rudder-server/testhelper"
 	"golang.org/x/oauth2"
 	"google.golang.org/api/option"
 	"google.golang.org/api/sheets/v4"
 )
 
 var (
-	hold     bool
-	endpoint string
+	hold       bool
+	testConfig TestConfig
 )
 
 const (
@@ -32,8 +33,6 @@ const (
 	destinationId = "destinationId"
 	header1       = "Product Purchased"
 	header2       = "Product Value"
-	accessToken   = "cd887efc-7c7d-4e8e-9580-f7502123badf"
-	refreshToken  = "bdbbe5ec-6081-4c6c-8974-9c4abfc0fdcc"
 )
 
 func Test_Timeout(t *testing.T) {
@@ -51,11 +50,7 @@ func Test_Timeout(t *testing.T) {
 			{"to": header1},
 			{"to": header2},
 		},
-		TestConfig: TestConfig{
-			Endpoint:     endpoint,
-			AccessToken:  accessToken,
-			RefreshToken: refreshToken,
-		},
+		TestConfig: testConfig,
 	}
 	client, err := NewProducer(config, Opts{Timeout: 10 * time.Second})
 	if err != nil {
@@ -103,43 +98,14 @@ func run(m *testing.M) int {
 		log.Printf("Could not connect to docker: %s", err)
 		return -1
 	}
-
-	dockerContainer, err := pool.Run("atzoum/simulator-google-sheets", "latest", []string{})
+	cleanup := &testhelper.Cleanup{}
+	defer cleanup.Run()
+	config, err := SetupTestGoogleSheets(pool, cleanup)
 	if err != nil {
-		log.Printf("Could not start resource: %s", err)
+		log.Printf("Could not start google sheets service: %s", err)
 		return -1
 	}
-	defer func() {
-		_ = recover()
-		if err := pool.Purge(dockerContainer); err != nil {
-			log.Printf("Could not purge resource: %s \n", err)
-			panic(err)
-		}
-	}()
-	endpoint = fmt.Sprintf("https://127.0.0.1:%s/", dockerContainer.GetPort("8443/tcp"))
-	token := &oauth2.Token{
-		AccessToken:  accessToken,
-		RefreshToken: refreshToken,
-	}
-	config := &tls.Config{
-		// skipcq: GSC-G402
-		InsecureSkipVerify: true,
-	}
-	client := oauth2.NewClient(context.Background(), oauth2.StaticTokenSource(token))
-	trans := client.Transport.(*oauth2.Transport)
-	trans.Base = &http.Transport{TLSClientConfig: config}
-	sheetService, err := sheets.NewService(context.Background(), option.WithEndpoint(endpoint), option.WithHTTPClient(client))
-
-	if err := pool.Retry(func() error {
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		defer cancel()
-		_, err = sheetService.Spreadsheets.Get(sheetId).Context(ctx).Do()
-		return err
-	}); err != nil {
-		log.Printf("Could not connect to docker: %s", err)
-		return -1
-	}
-
+	testConfig = *config
 	code := m.Run()
 	blockOnHold()
 
@@ -158,4 +124,48 @@ func blockOnHold() {
 	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
 
 	<-c
+}
+
+type deferer interface {
+	Defer(func() error)
+}
+
+func SetupTestGoogleSheets(pool *dockertest.Pool, d deferer) (*TestConfig, error) {
+	var config TestConfig
+	dockerContainer, err := pool.Run("atzoum/simulator-google-sheets", "latest", []string{})
+	if err != nil {
+		return nil, fmt.Errorf("Could not start resource: %s", err)
+	}
+	d.Defer(func() error {
+		if err := pool.Purge(dockerContainer); err != nil {
+			return fmt.Errorf("Could not purge resource: %s \n", err)
+		}
+		return nil
+	})
+	config.Endpoint = fmt.Sprintf("https://127.0.0.1:%s/", dockerContainer.GetPort("8443/tcp"))
+	config.AccessToken = "cd887efc-7c7d-4e8e-9580-f7502123badf"
+	config.RefreshToken = "bdbbe5ec-6081-4c6c-8974-9c4abfc0fdcc"
+
+	token := &oauth2.Token{
+		AccessToken:  config.AccessToken,
+		RefreshToken: config.RefreshToken,
+	}
+	tlsConfig := &tls.Config{
+		// skipcq: GSC-G402
+		InsecureSkipVerify: true,
+	}
+	client := oauth2.NewClient(context.Background(), oauth2.StaticTokenSource(token))
+	trans := client.Transport.(*oauth2.Transport)
+	trans.Base = &http.Transport{TLSClientConfig: tlsConfig}
+	sheetService, err := sheets.NewService(context.Background(), option.WithEndpoint(config.Endpoint), option.WithHTTPClient(client))
+
+	if err := pool.Retry(func() error {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		_, err = sheetService.Spreadsheets.Get("sheetId").Context(ctx).Do()
+		return err
+	}); err != nil {
+		return nil, fmt.Errorf("Could not connect to Google sheets service")
+	}
+	return &config, nil
 }
