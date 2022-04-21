@@ -87,10 +87,8 @@ func run(m *testing.M) int {
 		return -1
 	}
 	defer func() {
-		_ = recover()
 		if err := pool.Purge(pubsubContainer); err != nil {
-			log.Printf("Could not purge resource: %s \n", err)
-			panic(err)
+			log.Panicf("Could not purge resource: %s \n", err)
 		}
 	}()
 	endpoint = fmt.Sprintf("127.0.0.1:%s", pubsubContainer.GetPort("8681/tcp"))

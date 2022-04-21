@@ -60,7 +60,6 @@ func init() {
 // NewProducer creates a producer based on destination config
 func NewProducer(destinationConfig interface{}, o Opts) (*Client, error) {
 	var config Config
-	var credentialsFile Credentials
 	var headerRowStr []string
 	jsonConfig, err := json.Marshal(destinationConfig)
 	if err != nil {
@@ -71,50 +70,13 @@ func NewProducer(destinationConfig interface{}, o Opts) (*Client, error) {
 		return nil, fmt.Errorf("[GoogleSheets] error  :: error in GoogleSheets while unmarshalling destination config:: %w", err)
 	}
 
-	var opts []option.ClientOption = make([]option.ClientOption, 0)
-
-	if config.TestConfig.Endpoint != "" {
-		opts = append(opts, option.WithEndpoint(config.TestConfig.Endpoint))
-		token := &oauth2.Token{
-			AccessToken:  config.TestConfig.AccessToken,
-			RefreshToken: config.TestConfig.RefreshToken,
-		}
-		config := &tls.Config{
-			// skipcq: GSC-G402
-			InsecureSkipVerify: true,
-		}
-		client := oauth2.NewClient(context.Background(), oauth2.StaticTokenSource(token))
-		trans := client.Transport.(*oauth2.Transport)
-		trans.Base = &http.Transport{TLSClientConfig: config}
-		opts = append(opts, option.WithHTTPClient(client))
-	} else {
-		if config.Credentials != "" {
-			err = json.Unmarshal([]byte(config.Credentials), &credentialsFile)
-			if err != nil {
-				return nil, fmt.Errorf("[GoogleSheets] error  :: error in GoogleSheets while unmarshalling credentials json:: %w", err)
-			}
-
-		}
-		// Creating token URL from Credentials file if not using constant from google.JWTTOkenURL
-		tokenURI := google.JWTTokenURL
-		if credentialsFile.TokenUrl != "" {
-			tokenURI = credentialsFile.TokenUrl
-		}
-		// Creating JWT Config which we are using for getting the oauth token
-		jwtconfig := &jwt.Config{
-			Email:      credentialsFile.Email,
-			PrivateKey: []byte(credentialsFile.PrivateKey),
-			Scopes: []string{
-				"https://www.googleapis.com/auth/spreadsheets",
-			},
-			TokenURL: tokenURI,
-		}
-		client, err := generateOAuthClient(jwtconfig)
-		if err != nil {
-			pkgLogger.Errorf("[Googlesheets] error  :: %v", err)
+	var opts []option.ClientOption
+	if config.TestConfig.Endpoint != "" { // test configuration
+		opts = testClientOptions(config)
+	} else { // normal configuration
+		if opts, err = clientOptions(config); err != nil {
 			return nil, err
 		}
-		opts = append(opts, option.WithHTTPClient(client))
 	}
 
 	service, err := generateService(opts...)
@@ -174,22 +136,6 @@ func Produce(jsonData json.RawMessage, producer interface{}, _ interface{}) (sta
 	respStatus = "Success"
 	responseMessage = "[GoogleSheets] :: Message Payload inserted with messageId :: " + parsedJSON.Get("id").String()
 	return 200, respStatus, responseMessage
-}
-
-// generateOAuthClient produces an OAuth client based on a jwt Config
-func generateOAuthClient(jwtconfig *jwt.Config) (*http.Client, error) {
-	ctx := context.Background()
-	var oauthconfig *oauth2.Config
-	token, err := jwtconfig.TokenSource(ctx).Token()
-	if err != nil {
-		return nil, fmt.Errorf("[GoogleSheets] error  :: error in GoogleSheets while Retrieving token for service account:: %w", err)
-	}
-	// Once the token is received we are generating the oauth-config client which are using for generating the google-sheets service
-	client := oauthconfig.Client(ctx, token)
-	if err != nil {
-		return nil, fmt.Errorf("[GoogleSheets] error  :: Unable to create oauth client :: %w", err)
-	}
-	return client, err
 }
 
 // generateService produces a google-sheets client using the specified client options
@@ -284,4 +230,65 @@ func handleServiceError(err error) (statusCode int, responseMessage string) {
 		responseMessage = serviceErr.Message
 	}
 	return statusCode, responseMessage
+}
+
+func clientOptions(config Config) ([]option.ClientOption, error) {
+	var credentials Credentials
+	if config.Credentials != "" {
+		err := json.Unmarshal([]byte(config.Credentials), &credentials)
+		if err != nil {
+			return nil, fmt.Errorf("[GoogleSheets] error  :: error in GoogleSheets while unmarshalling credentials json:: %w", err)
+		}
+	}
+	// Creating token URL from Credentials file if not using constant from google.JWTTOkenURL
+	tokenURI := google.JWTTokenURL
+	if credentials.TokenUrl != "" {
+		tokenURI = credentials.TokenUrl
+	}
+	// Creating JWT Config which we are using for getting the oauth token
+	jwtconfig := &jwt.Config{
+		Email:      credentials.Email,
+		PrivateKey: []byte(credentials.PrivateKey),
+		Scopes: []string{
+			"https://www.googleapis.com/auth/spreadsheets",
+		},
+		TokenURL: tokenURI,
+	}
+	client, err := generateOAuthClient(jwtconfig)
+	if err != nil {
+		pkgLogger.Errorf("[Googlesheets] error  :: %v", err)
+		return nil, err
+	}
+	return []option.ClientOption{option.WithHTTPClient(client)}, nil
+}
+
+// generateOAuthClient produces an OAuth client based on a jwt Config
+func generateOAuthClient(jwtconfig *jwt.Config) (*http.Client, error) {
+	ctx := context.Background()
+	var oauthconfig *oauth2.Config
+	token, err := jwtconfig.TokenSource(ctx).Token()
+	if err != nil {
+		return nil, fmt.Errorf("[GoogleSheets] error  :: error in GoogleSheets while Retrieving token for service account:: %w", err)
+	}
+	// Once the token is received we are generating the oauth-config client which are using for generating the google-sheets service
+	client := oauthconfig.Client(ctx, token)
+	if err != nil {
+		return nil, fmt.Errorf("[GoogleSheets] error  :: Unable to create oauth client :: %w", err)
+	}
+	return client, err
+}
+
+func testClientOptions(config Config) []option.ClientOption {
+	token := &oauth2.Token{
+		AccessToken:  config.TestConfig.AccessToken,
+		RefreshToken: config.TestConfig.RefreshToken,
+	}
+	tlsConfig := &tls.Config{
+		// skipcq: GSC-G402
+		InsecureSkipVerify: true,
+	}
+	client := oauth2.NewClient(context.Background(), oauth2.StaticTokenSource(token))
+	trans := client.Transport.(*oauth2.Transport)
+	trans.Base = &http.Transport{TLSClientConfig: tlsConfig}
+	return []option.ClientOption{option.WithEndpoint(config.TestConfig.Endpoint), option.WithHTTPClient(client)}
 }

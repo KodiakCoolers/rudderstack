@@ -29,7 +29,7 @@ type TestConfig struct {
 type PubsubClient struct {
 	pbs      *pubsub.Client
 	topicMap map[string]*pubsub.Topic
-	o        Opts
+	opts     Opts
 }
 
 type Opts struct {
@@ -54,16 +54,20 @@ func NewProducer(destinationConfig interface{}, o Opts) (*PubsubClient, error) {
 	if err != nil {
 		return nil, fmt.Errorf("[GooglePubSub] error  :: error in GooglePubSub while unmarshelling destination config:: %w", err)
 	}
-	var client *pubsub.Client
-	if config.ProjectId != "" && (config.Credentials != "" || config.TestConfig.Endpoint != "") {
-		if config.Credentials != "" {
-			client, err = pubsub.NewClient(ctx, config.ProjectId, option.WithCredentialsJSON([]byte(config.Credentials)))
-		} else {
-			client, err = pubsub.NewClient(ctx, config.ProjectId, option.WithoutAuthentication(), option.WithGRPCDialOption(grpc.WithInsecure()), option.WithEndpoint(config.TestConfig.Endpoint))
-		}
+	if config.ProjectId == "" {
+		return nil, fmt.Errorf("invalid configuration provided, missing projectId")
 	}
-	if err != nil {
-		return nil, err
+	var client *pubsub.Client
+	if config.Credentials != "" { // Normal configuration requires credentials
+		if client, err = pubsub.NewClient(ctx, config.ProjectId, option.WithCredentialsJSON([]byte(config.Credentials))); err != nil {
+			return nil, err
+		}
+	} else if config.TestConfig.Endpoint != "" { // Test configuration requires a custom endpoint
+		if client, err = pubsub.NewClient(ctx, config.ProjectId, option.WithoutAuthentication(), option.WithGRPCDialOption(grpc.WithInsecure()), option.WithEndpoint(config.TestConfig.Endpoint)); err != nil {
+			return nil, err
+		}
+	} else { // No configuration
+		return nil, fmt.Errorf("invalid configuration provided, missing credentials")
 	}
 	var topicMap = make(map[string]*pubsub.Topic, len(config.EventToTopicMap))
 	for _, s := range config.EventToTopicMap {
@@ -78,7 +82,7 @@ func NewProducer(destinationConfig interface{}, o Opts) (*PubsubClient, error) {
 func Produce(jsonData json.RawMessage, producer interface{}, _ interface{}) (statusCode int, respStatus string, responseMessage string) {
 	parsedJSON := gjson.ParseBytes(jsonData)
 	pbs, ok := producer.(*PubsubClient)
-	ctx, cancel := context.WithTimeout(context.Background(), pbs.o.Timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), pbs.opts.Timeout)
 	defer cancel()
 	if !ok {
 		respStatus = "Failure"

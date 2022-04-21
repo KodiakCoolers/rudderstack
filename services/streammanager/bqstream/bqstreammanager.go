@@ -30,7 +30,7 @@ type Credentials struct {
 
 type Client struct {
 	bqClient *bigquery.Client
-	o        Opts
+	opts     Opts
 }
 type Opts struct {
 	Timeout time.Duration
@@ -84,14 +84,14 @@ func NewProducer(destinationConfig interface{}, o Opts) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Client{bqClient: bqClient, o: o}, nil
+	return &Client{bqClient: bqClient, opts: o}, nil
 }
 
 func Produce(jsonData json.RawMessage, producer interface{}, destConfig interface{}) (statusCode int, respStatus string, responseMessage string) {
 
 	client := producer.(*Client)
 	bqClient := client.bqClient
-	o := client.o
+	o := client.opts
 	parsedJSON := gjson.ParseBytes(jsonData)
 	dsId := parsedJSON.Get("datasetId").String()
 	tblId := parsedJSON.Get("tableId").String()
