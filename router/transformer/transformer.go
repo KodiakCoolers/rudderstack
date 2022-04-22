@@ -81,7 +81,7 @@ func (trans *HandleT) Transform(transformType string, transformMessage *types.Tr
 		trans.logger.Errorf("problematic input for marshalling: %#v", transformMessage)
 		panic(err)
 	}
-	trans.logger.Debugf("[Router Transformer] :: input payload : %s", string(rawJSON))
+	trans.logger.Infof("[Router Transformer] :: input payload : %s", string(rawJSON))
 
 	retryCount := 0
 	var resp *http.Response
@@ -109,6 +109,8 @@ func (trans *HandleT) Transform(transformType string, transformMessage *types.Tr
 			//If reading body fails, retrying.
 			respData, err = io.ReadAll(resp.Body)
 		}
+
+		trans.logger.Infof("[Router Transformer] :: output payload : %s", string(respData))
 
 		if err != nil {
 			trans.transformRequestTimerStat.SendTiming(time.Since(s))
